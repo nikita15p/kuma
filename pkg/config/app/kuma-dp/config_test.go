@@ -1,6 +1,7 @@
 package kumadp_test
 
 import (
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 
+	mesh_proto "github.com/kumahq/kuma/api/mesh/v1alpha1"
 	"github.com/kumahq/kuma/pkg/config"
 	kuma_dp "github.com/kumahq/kuma/pkg/config/app/kuma-dp"
 	config_types "github.com/kumahq/kuma/pkg/config/types"
@@ -60,6 +62,7 @@ var _ = Describe("Config", func() {
 				"KUMA_DATAPLANE_NAME":                                    "example",
 				"KUMA_DATAPLANE_ADMIN_PORT":                              "2345",
 				"KUMA_DATAPLANE_DRAIN_TIME":                              "60s",
+				"KUMA_DATAPLANE_PROXY_TYPE":                              "ingress",
 				"KUMA_DATAPLANE_RUNTIME_BINARY_PATH":                     "envoy.sh",
 				"KUMA_DATAPLANE_RUNTIME_CONFIG_DIR":                      "/var/run/envoy",
 				"KUMA_DATAPLANE_RUNTIME_TOKEN_PATH":                      "/tmp/token",
@@ -132,6 +135,19 @@ var _ = Describe("Config", func() {
 		err := config.Load(filepath.Join("testdata", "invalid-config.input.yaml"), &cfg)
 
 		// then
-		Expect(err.Error()).To(Equal(`Invalid configuration: .ControlPlane is not valid: .Retry is not valid: .Backoff must be a positive duration; .Dataplane is not valid: .Mesh must be non-empty; .Name must be non-empty; .DrainTime must be positive; .DataplaneRuntime is not valid: .BinaryPath must be non-empty`))
+		fmt.Println(err.Error())
+		Expect(err.Error()).To(Equal(`Invalid configuration: .ControlPlane is not valid: .Retry is not valid: .Backoff must be a positive duration; .Dataplane is not valid: .ProxyType is not valid: not-a-proxy is not a valid proxy type; .Mesh must be non-empty; .Name must be non-empty; .DrainTime must be positive; .DataplaneRuntime is not valid: .BinaryPath must be non-empty`))
 	})
+
+	It("should ensure the proxy type is supported", func() {
+		// given
+		cfg := kuma_dp.Config{}
+
+		Expect(config.Load(filepath.Join("testdata", "valid-config.input.yaml"), &cfg)).Should(Succeed())
+
+		// when
+		cfg.Dataplane.ProxyType = string(mesh_proto.GatewayProxyType)
+		Expect(cfg.Validate()).ShouldNot(Succeed())
+	})
+
 })

@@ -21,23 +21,24 @@ var (
 
 type deployOptions struct {
 	// cp specific
-	globalAddress    string
-	installationMode InstallationMode
-	skipDefaultMesh  bool
-	helmReleaseName  string
-	helmChartPath    *string
-	helmChartVersion string
-	helmOpts         map[string]string
-	noHelmOpts       []string
-	ctlOpts          map[string]string
-	env              map[string]string
-	ingress          bool
-	cni              bool
-	cpReplicas       int
-	proxyOnly        bool
-	hdsDisabled      bool
-	serviceProbe     bool
-	isipv6           bool
+	globalAddress        string
+	installationMode     InstallationMode
+	skipDefaultMesh      bool
+	helmReleaseName      string
+	helmChartPath        *string
+	helmChartVersion     string
+	helmOpts             map[string]string
+	noHelmOpts           []string
+	ctlOpts              map[string]string
+	env                  map[string]string
+	ingress              bool
+	cni                  bool
+	cpReplicas           int
+	proxyOnly            bool
+	hdsDisabled          bool
+	serviceProbe         bool
+	isipv6               bool
+	runPostgresMigration bool
 
 	// app specific
 	namespace      string
@@ -47,7 +48,7 @@ type deployOptions struct {
 	appArgs        []string
 	token          string
 	transparent    bool
-	builtindns     bool
+	builtindns     *bool // true by default
 	protocol       string
 	serviceName    string
 	serviceVersion string
@@ -56,6 +57,20 @@ type deployOptions struct {
 }
 
 type DeployOptionsFunc func(*deployOptions)
+
+func WithPostgres(envVars map[string]string) DeployOptionsFunc {
+	return func(o *deployOptions) {
+		o.runPostgresMigration = true
+
+		if o.env == nil {
+			o.env = map[string]string{}
+		}
+
+		for key, value := range envVars {
+			o.env[key] = value
+		}
+	}
+}
 
 func WithYaml(appYaml string) DeployOptionsFunc {
 	return func(o *deployOptions) {
@@ -236,7 +251,7 @@ func WithTransparentProxy(transparent bool) DeployOptionsFunc {
 
 func WithBuiltinDNS(builtindns bool) DeployOptionsFunc {
 	return func(o *deployOptions) {
-		o.builtindns = builtindns
+		o.builtindns = &builtindns
 	}
 }
 
@@ -300,4 +315,5 @@ type ControlPlane interface {
 	GetKDSServerAddress() string
 	GetGlobaStatusAPI() string
 	GenerateDpToken(mesh, appname string) (string, error)
+	GenerateZoneIngressToken(zone string) (string, error)
 }
