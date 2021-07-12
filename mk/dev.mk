@@ -1,7 +1,7 @@
 GINKGO_VERSION := v1.14.2
 GOIMPORTS_VERSION := v0.1.0
 GOLANGCI_LINT_VERSION := v1.37.1
-GOLANG_PROTOBUF_VERSION := v1.4.3
+GOLANG_PROTOBUF_VERSION := v1.5.2
 HELM_DOCS_VERSION := 1.4.0
 KUSTOMIZE_VERSION := v4.1.3
 PROTOC_PGV_VERSION := v0.4.1
@@ -16,6 +16,10 @@ CI_TOOLS_DIR ?= $(HOME)/bin
 GOPATH_DIR := $(shell go env GOPATH | awk -F: '{print $$1}')
 GOPATH_BIN_DIR := $(GOPATH_DIR)/bin
 export PATH := $(CI_TOOLS_DIR):$(GOPATH_BIN_DIR):$(PATH)
+
+# The e2e tests depend on Kind kubeconfigs being in this directory,
+# so this is location should not be changed by developers.
+KUBECONFIG_DIR := $(HOME)/.kube
 
 PROTOC_PATH := $(CI_TOOLS_DIR)/protoc
 PROTOBUF_WKT_DIR := $(CI_TOOLS_DIR)/protobuf.d
@@ -242,3 +246,28 @@ changelog:
 		--start refs/heads/$(GEN_CHANGELOG_START_TAG) \
 		--branch refs/heads/$(GEN_CHANGELOG_BRANCH) > $(GEN_CHANGELOG_MD)
 	@echo "The generated changelog is in $(GEN_CHANGELOG_MD)"
+
+$(KUBECONFIG_DIR):
+	@mkdir -p $(KUBECONFIG_DIR)
+
+# kubectl always writes the current context into the first config file. When
+# debugging, it's common to switch contexts and we don't want to edit the Kind
+# config files (because then the integration tests have the wrong current
+# context). So we create this as a place for kubectl to write the interactive
+# current context.
+$(KUBECONFIG_DIR)/kind-kuma-current: $(KUBECONFIG_DIR)
+	@touch $@
+
+# Generate a .envrc that prepends e2e test suite configs to whatever
+# KUBECONFIG currently has, and stores CI tooling in .tools.
+.PHONY: dev/enrc
+dev/envrc: $(KUBECONFIG_DIR)/kind-kuma-current ## Generate .envrc
+	@echo 'export CI_TOOLS_DIR=$$(expand_path .tools)' > .envrc
+	@for c in $(patsubst %,$(KUBECONFIG_DIR)/kind-%-config,kuma $(K8SCLUSTERS)) $(KUBECONFIG_DIR)/kind-kuma-current ; do \
+		echo "path_add KUBECONFIG $$c" ; \
+	done >> .envrc
+	@echo 'export KUBECONFIG' >> .envrc
+	@for prog in $(BUILD_RELEASE_BINARIES) ; do \
+		echo "PATH_add $(BUILD_ARTIFACTS_DIR)/$$prog" ; \
+	done >> .envrc
+	@direnv allow

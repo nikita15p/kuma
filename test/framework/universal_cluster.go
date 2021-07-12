@@ -61,12 +61,17 @@ func (c *UniversalCluster) DismissCluster() (errs error) {
 			errs = multierr.Append(errs, err)
 		}
 	}
-	for _, deployment := range c.deployments {
+	for name, deployment := range c.deployments {
 		if err := deployment.Delete(c); err != nil {
 			errs = multierr.Append(errs, err)
 		}
+		delete(c.deployments, name)
 	}
 	return
+}
+
+func (c *UniversalCluster) Verbose() bool {
+	return c.verbose
 }
 
 func (c *UniversalCluster) DeployKuma(mode string, fs ...DeployOptionsFunc) error {
@@ -314,4 +319,16 @@ func (c *UniversalCluster) Deployment(name string) Deployment {
 func (c *UniversalCluster) Deploy(deployment Deployment) error {
 	c.deployments[deployment.Name()] = deployment
 	return deployment.Deploy(c)
+}
+
+func (c *UniversalCluster) DeleteDeployment(name string) error {
+	deployment, ok := c.deployments[name]
+	if !ok {
+		return errors.Errorf("deployment %s not found", name)
+	}
+	if err := deployment.Delete(c); err != nil {
+		return err
+	}
+	delete(c.deployments, name)
+	return nil
 }

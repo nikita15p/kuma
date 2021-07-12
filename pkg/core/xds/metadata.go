@@ -3,15 +3,14 @@ package xds
 import (
 	"strconv"
 
-	_struct "github.com/golang/protobuf/ptypes/struct"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	mesh_proto "github.com/kumahq/kuma/api/mesh/v1alpha1"
-	util_proto "github.com/kumahq/kuma/pkg/util/proto"
-
-	core_mesh "github.com/kumahq/kuma/pkg/core/resources/apis/mesh"
-	"github.com/kumahq/kuma/pkg/core/resources/model/rest"
-
 	"github.com/kumahq/kuma/pkg/core"
+	core_mesh "github.com/kumahq/kuma/pkg/core/resources/apis/mesh"
+	"github.com/kumahq/kuma/pkg/core/resources/model"
+	"github.com/kumahq/kuma/pkg/core/resources/model/rest"
+	util_proto "github.com/kumahq/kuma/pkg/util/proto"
 )
 
 var metadataLog = core.Log.WithName("xds-server").WithName("metadata-tracker")
@@ -19,7 +18,6 @@ var metadataLog = core.Log.WithName("xds-server").WithName("metadata-tracker")
 const (
 	// Supported Envoy node metadata fields.
 
-	fieldDataplaneTokenPath         = "dataplaneTokenPath"
 	fieldDataplaneToken             = "dataplane.token"
 	fieldDataplaneAdminPort         = "dataplane.admin.port"
 	fieldDataplaneDNSPort           = "dataplane.dns.port"
@@ -45,23 +43,14 @@ const (
 // This way, xDS server will be able to use Envoy node metadata
 // to generate xDS resources that depend on environment-specific configuration.
 type DataplaneMetadata struct {
-	DataplaneTokenPath  string
-	DataplaneToken      string
-	DataplaneResource   *core_mesh.DataplaneResource
-	ZoneIngressResource *core_mesh.ZoneIngressResource
-	AdminPort           uint32
-	DNSPort             uint32
-	EmptyDNSPort        uint32
-	DynamicMetadata     map[string]string
-	ProxyType           mesh_proto.ProxyType
-	Version             *mesh_proto.Version
-}
-
-func (m *DataplaneMetadata) GetDataplaneTokenPath() string {
-	if m == nil {
-		return ""
-	}
-	return m.DataplaneTokenPath
+	DataplaneToken  string
+	Resource        model.Resource
+	AdminPort       uint32
+	DNSPort         uint32
+	EmptyDNSPort    uint32
+	DynamicMetadata map[string]string
+	ProxyType       mesh_proto.ProxyType
+	Version         *mesh_proto.Version
 }
 
 func (m *DataplaneMetadata) GetDataplaneToken() string {
@@ -71,18 +60,28 @@ func (m *DataplaneMetadata) GetDataplaneToken() string {
 	return m.DataplaneToken
 }
 
+// GetDataplaneResource returns the underlying DataplaneResource, if present.
+// If the resource is of a different type, it returns nil.
 func (m *DataplaneMetadata) GetDataplaneResource() *core_mesh.DataplaneResource {
-	if m == nil {
-		return nil
+	if m != nil {
+		if d, ok := m.Resource.(*core_mesh.DataplaneResource); ok {
+			return d
+		}
 	}
-	return m.DataplaneResource
+
+	return nil
 }
 
+// GetZoneIngressResource returns the underlying ZoneIngressResource, if present.
+// If the resource is of a different type, it returns nil.
 func (m *DataplaneMetadata) GetZoneIngressResource() *core_mesh.ZoneIngressResource {
-	if m == nil {
-		return nil
+	if m != nil {
+		if z, ok := m.Resource.(*core_mesh.ZoneIngressResource); ok {
+			return z
+		}
 	}
-	return m.ZoneIngressResource
+
+	return nil
 }
 
 func (m *DataplaneMetadata) GetProxyType() mesh_proto.ProxyType {
@@ -127,13 +126,10 @@ func (m *DataplaneMetadata) GetVersion() *mesh_proto.Version {
 	return m.Version
 }
 
-func DataplaneMetadataFromXdsMetadata(xdsMetadata *_struct.Struct) *DataplaneMetadata {
+func DataplaneMetadataFromXdsMetadata(xdsMetadata *structpb.Struct) *DataplaneMetadata {
 	metadata := DataplaneMetadata{}
 	if xdsMetadata == nil {
 		return &metadata
-	}
-	if field := xdsMetadata.Fields[fieldDataplaneTokenPath]; field != nil {
-		metadata.DataplaneTokenPath = field.GetStringValue()
 	}
 	if field := xdsMetadata.Fields[fieldDataplaneToken]; field != nil {
 		metadata.DataplaneToken = field.GetStringValue()
@@ -150,12 +146,14 @@ func DataplaneMetadataFromXdsMetadata(xdsMetadata *_struct.Struct) *DataplaneMet
 			metadataLog.Error(err, "invalid value in dataplane metadata", "field", fieldDataplaneDataplaneResource, "value", value)
 		}
 		switch r := res.(type) {
-		case *core_mesh.DataplaneResource:
-			metadata.DataplaneResource = r
-		case *core_mesh.ZoneIngressResource:
-			metadata.ZoneIngressResource = r
+		case *core_mesh.DataplaneResource,
+			*core_mesh.ZoneIngressResource:
+			metadata.Resource = r
 		default:
-			metadataLog.Error(err, "invalid value in dataplane metadata", "field", fieldDataplaneDataplaneResource, "value", value)
+			metadataLog.Error(err, "invalid dataplane resource type",
+				"resource", r.GetType(),
+				"field", fieldDataplaneDataplaneResource,
+				"value", value)
 		}
 	}
 	if value := xdsMetadata.Fields[fieldDynamicMetadata]; value != nil {
@@ -176,7 +174,7 @@ func DataplaneMetadataFromXdsMetadata(xdsMetadata *_struct.Struct) *DataplaneMet
 	return &metadata
 }
 
-func uint32Metadata(xdsMetadata *_struct.Struct, field string) uint32 {
+func uint32Metadata(xdsMetadata *structpb.Struct, field string) uint32 {
 	value := xdsMetadata.Fields[field]
 	if value == nil {
 		return 0

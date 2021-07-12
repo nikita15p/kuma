@@ -293,8 +293,10 @@ type Cluster interface {
 	GetKumactlOptions() *KumactlOptions
 	Deployment(name string) Deployment
 	Deploy(deployment Deployment) error
+	DeleteDeployment(name string) error
 	WithTimeout(timeout time.Duration) Cluster
 	WithRetries(retries int) Cluster
+	Verbose() bool
 
 	// K8s
 	GetKubectlOptions(namespace ...string) *k8s.KubectlOptions
@@ -312,6 +314,7 @@ type Cluster interface {
 type ControlPlane interface {
 	GetName() string
 	GetKumaCPLogs() (string, error)
+	GetMetrics() (string, error)
 	GetKDSServerAddress() string
 	GetGlobaStatusAPI() string
 	GenerateDpToken(mesh, appname string) (string, error)

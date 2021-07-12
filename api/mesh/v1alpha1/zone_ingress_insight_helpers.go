@@ -3,7 +3,7 @@ package v1alpha1
 import (
 	"time"
 
-	"github.com/golang/protobuf/ptypes"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func (x *ZoneIngressInsight) GetSubscription(id string) (int, *DiscoverySubscription) {
@@ -23,7 +23,20 @@ func (x *ZoneIngressInsight) UpdateSubscription(s *DiscoverySubscription) {
 	if old != nil {
 		x.Subscriptions[i] = s
 	} else {
+		x.finalizeSubscriptions()
 		x.Subscriptions = append(x.Subscriptions, s)
+	}
+}
+
+// If Kuma CP was killed ungracefully then we can get a subscription without a DisconnectTime.
+// Because of the way we process subscriptions the lack of DisconnectTime on old subscription
+// will cause wrong status.
+func (x *ZoneIngressInsight) finalizeSubscriptions() {
+	now := timestamppb.Now()
+	for _, subscription := range x.GetSubscriptions() {
+		if subscription.DisconnectTime == nil {
+			subscription.DisconnectTime = now
+		}
 	}
 }
 
@@ -43,10 +56,10 @@ func (x *ZoneIngressInsight) GetLatestSubscription() (*DiscoverySubscription, *t
 	var idx int = 0
 	var latest *time.Time
 	for i, s := range x.GetSubscriptions() {
-		t, err := ptypes.Timestamp(s.ConnectTime)
-		if err != nil {
+		if err := s.ConnectTime.CheckValid(); err != nil {
 			continue
 		}
+		t := s.ConnectTime.AsTime()
 		if latest == nil || latest.Before(t) {
 			idx = i
 			latest = &t

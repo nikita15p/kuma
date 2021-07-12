@@ -47,6 +47,10 @@ func (cs *UniversalClusters) WithTimeout(timeout time.Duration) Cluster {
 	return cs
 }
 
+func (cs *UniversalClusters) Verbose() bool {
+	return cs.verbose
+}
+
 func (cs *UniversalClusters) WithRetries(retries int) Cluster {
 	for _, c := range cs.clusters {
 		c.WithRetries(retries)
@@ -197,6 +201,15 @@ func (cs *UniversalClusters) Deploy(deployment Deployment) error {
 	for name, c := range cs.clusters {
 		if err := c.Deploy(deployment); err != nil {
 			return errors.Wrapf(err, "deployment %s failed on %s cluster", deployment.Name(), name)
+		}
+	}
+	return nil
+}
+
+func (cs *UniversalClusters) DeleteDeployment(deploymentName string) error {
+	for name, c := range cs.clusters {
+		if err := c.DeleteDeployment(deploymentName); err != nil {
+			return errors.Wrapf(err, "delete deployment %s failed on %s cluster", deploymentName, name)
 		}
 	}
 	return nil

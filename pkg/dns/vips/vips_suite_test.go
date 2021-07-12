@@ -1,4 +1,4 @@
-package v2_test
+package vips_test
 
 import (
 	"testing"
@@ -7,7 +7,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-func TestAccesslog(t *testing.T) {
+func TestVIPs(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Accesslog Suite")
+	RunSpecs(t, "VIPs Suite")
 }
