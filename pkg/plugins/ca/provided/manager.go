@@ -2,6 +2,7 @@ package provided
 
 import (
 	"context"
+	"strings"
 
 	"github.com/pkg/errors"
 
@@ -47,6 +48,10 @@ func (p *providedCaManager) ValidateBackend(ctx context.Context, mesh string, ba
 		verr.AddError("key", datasource.Validate(cfg.GetKey()))
 	}
 
+	if cfg.GetChainCert() != nil && cfg.GetRootCert() == nil{
+		verr.AddViolation("root cert", "has to be defined")
+	}
+
 	if !verr.HasViolations() {
 		pair, err := p.getCa(ctx, mesh, backend)
 		if err != nil {
@@ -79,6 +84,42 @@ func (p *providedCaManager) getCa(ctx context.Context, mesh string, backend *mes
 	return pair, nil
 }
 
+func (p *providedCaManager) getRootCert(ctx context.Context, mesh string, backend *mesh_proto.CertificateAuthorityBackend) (ca.Cert, error){
+	cfg := &config.ProvidedCertificateAuthorityConfig{}
+	if err := util_proto.ToTyped(backend.Conf, cfg); err != nil{
+		return ca.Cert{}, errors.Wrap(err, "could not convert backend config to ProvidedCertificateAuthorityConfig")
+	}
+	if cfg.GetRootCert() != nil{
+		rootCert, err := p.dataSourceLoader.Load(ctx, mesh, cfg.GetRootCert())
+		if err != nil{
+			return ca.Cert{}, err
+		}
+		return rootCert, nil
+	}
+
+	meshCa, err := p.getCa(ctx, mesh, backend)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to load CA key pair")
+	}
+
+	return meshCa.CertPEM, nil
+}
+
+func (p *providedCaManager) getChainCert(ctx context.Context, mesh string, backend *mesh_proto.CertificateAuthorityBackend) (ca.Cert, error){
+	cfg := &config.ProvidedCertificateAuthorityConfig{}
+	if err := util_proto.ToTyped(backend.Conf, cfg); err != nil{
+		return ca.Cert{}, errors.Wrap(err, "could not convert backend config to ProvidedCertificateAuthorityConfig")
+	}
+	if cfg.GetChainCert() != nil {
+		chainCert, err := p.dataSourceLoader.Load(ctx, mesh, cfg.ChainCert)
+		if err != nil {
+			return ca.Cert{}, err
+		}
+		return chainCert, nil
+	}
+	return nil, nil
+}
+
 func (p *providedCaManager) Ensure(ctx context.Context, mesh string, backend *mesh_proto.CertificateAuthorityBackend) error {
 	return nil // Cert and Key are created by user and pointed in the configuration which is validated first
 }
@@ -95,34 +136,62 @@ func (p *providedCaManager) UsedSecrets(mesh string, backend *mesh_proto.Certifi
 	if cfg.GetKey().GetSecret() != "" {
 		secrets = append(secrets, cfg.GetKey().GetSecret())
 	}
+	if cfg.GetRootCert().GetSecret() != "" {
+		secrets = append(secrets, cfg.GetRootCert().GetSecret())
+	}
+	if cfg.GetChainCert().GetSecret() != "" {
+		secrets = append(secrets, cfg.GetChainCert().GetSecret())
+	}
 	return secrets, nil
 }
 
-func (p *providedCaManager) GetRootCert(ctx context.Context, mesh string, backend *mesh_proto.CertificateAuthorityBackend) ([]ca.Cert, error) {
-	meshCa, err := p.getCa(ctx, mesh, backend)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to load CA key pair for Mesh %q and backend %q", mesh, backend.Name)
+//AppendCertByte: Append x.509 rootCert in bytes to existing certificate chain (in bytes)
+func AppendCertByte(pemCert []byte, rootCert []byte) []byte{
+	rootCerts := []byte{}
+	if len(pemCert) > 0{
+		//Copy the input certificate
+		rootCerts = []byte(strings.TrimSuffix(string(pemCert), "\n") + "\n")
 	}
-	return []ca.Cert{meshCa.CertPEM}, nil
+	rootCerts = append(rootCerts, rootCert...)
+	return rootCerts
 }
 
-func (p *providedCaManager) GenerateDataplaneCert(ctx context.Context, mesh string, backend *mesh_proto.CertificateAuthorityBackend, tags mesh_proto.MultiValueTagSet) (ca.KeyPair, error) {
+func (p *providedCaManager) GetRootCert(ctx context.Context, mesh string, backend *mesh_proto.CertificateAuthorityBackend) ([]ca.Cert,  error) {
+	rootCa, err := p.getRootCert(ctx, mesh, backend)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to load root cert for Mesh %q and backend %q", mesh, backend.Name)
+	}
+	return []ca.Cert{[]byte(rootCa)}, nil
+}
+
+func (p *providedCaManager) GenerateDataplaneCert(ctx context.Context, mesh string, backend *mesh_proto.CertificateAuthorityBackend, tags mesh_proto.MultiValueTagSet) (ca.KeyPair, ca.Cert, error) {
 	meshCa, err := p.getCa(ctx, mesh, backend)
 	if err != nil {
-		return ca.KeyPair{}, errors.Wrapf(err, "failed to load CA key pair for Mesh %q and backend %q", mesh, backend.Name)
+		return ca.KeyPair{}, ca.Cert{}, errors.Wrapf(err, "failed to load CA key pair for Mesh %q and backend %q", mesh, backend.Name)
 	}
+	rootCert , err := p.getRootCert(ctx, mesh, backend)
+	if err != nil{
+		return ca.KeyPair{}, ca.Cert{}, errors.Wrapf(err, "failed to load root cert for Mesh %q and backend %q", mesh, backend.Name)
+
+	}
+	chainCert, err := p.getChainCert(ctx, mesh, backend)
+	if err != nil{
+		return ca.KeyPair{}, ca.Cert{}, errors.Wrapf(err, "failed to load chain cert for Mesh %q and backend %q", mesh, backend.Name)
+	}
+	chain := AppendCertByte(chainCert, rootCert)
 
 	var opts []ca_issuer.CertOptsFn
 	if backend.GetDpCert().GetRotation().GetExpiration() != "" {
 		duration, err := mesh_helper.ParseDuration(backend.GetDpCert().GetRotation().Expiration)
 		if err != nil {
-			return ca.KeyPair{}, err
+			return ca.KeyPair{}, ca.Cert{}, err
 		}
 		opts = append(opts, ca_issuer.WithExpirationTime(duration))
 	}
 	keyPair, err := ca_issuer.NewWorkloadCert(meshCa, mesh, tags, opts...)
 	if err != nil {
-		return ca.KeyPair{}, errors.Wrapf(err, "failed to generate a Workload Identity cert for tags %q in Mesh %q using backend %q", tags.String(), mesh, backend.Name)
+		return ca.KeyPair{}, ca.Cert{}, errors.Wrapf(err, "failed to generate a Workload Identity cert for tags %q in Mesh %q using backend %q", tags.String(), mesh, backend.Name)
 	}
-	return *keyPair, nil
+
+	return *keyPair, chain, nil
 }

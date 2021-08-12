@@ -54,13 +54,13 @@ func (s *identityCertProvider) Get(ctx context.Context, requestor Identity) (*co
 		return nil, errors.Errorf("CA manager of type %s not exist", backend.Type)
 	}
 
-	pair, err := caManager.GenerateDataplaneCert(ctx, meshName, backend, requestor.Services)
+	pair, chainAndRoot, err := caManager.GenerateDataplaneCert(ctx, meshName, backend, requestor.Services)
 	if err != nil {
 		return nil, errors.Wrapf(err, "could not generate dataplane cert for mesh: %q backend: %q services: %q", meshName, backend.Name, requestor.Services)
 	}
 
 	return &core_xds.IdentitySecret{
-		PemCerts: [][]byte{pair.CertPEM},
+		PemCerts: [][]byte{append(pair.CertPEM,chainAndRoot...)},
 		PemKey:   pair.KeyPEM,
 	}, nil
 }

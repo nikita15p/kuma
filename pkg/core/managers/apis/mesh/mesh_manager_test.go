@@ -274,52 +274,6 @@ var _ = Describe("Mesh Manager", func() {
 	})
 
 	Describe("Update()", func() {
-		It("should not allow to change CA when mTLS is enabled", func() {
-			// given
-			meshName := "mesh-1"
-			resKey := model.ResourceKey{
-				Name: meshName,
-			}
-
-			// when
-			mesh := core_mesh.MeshResource{
-				Spec: &mesh_proto.Mesh{
-					Mtls: &mesh_proto.Mesh_Mtls{
-						EnabledBackend: "builtin-1",
-						Backends: []*mesh_proto.CertificateAuthorityBackend{
-							{
-								Name: "builtin-1",
-								Type: "builtin",
-							},
-							{
-								Name: "builtin-2",
-								Type: "builtin",
-							},
-						},
-					},
-				},
-			}
-			err := resManager.Create(context.Background(), &mesh, store.CreateBy(resKey))
-
-			// then
-			Expect(err).ToNot(HaveOccurred())
-
-			// when trying to change CA
-			mesh.Spec.Mtls.EnabledBackend = "builtin-2"
-			err = resManager.Update(context.Background(), &mesh)
-
-			// then
-			Expect(err).To(HaveOccurred())
-			Expect(err).To(Equal(&validators.ValidationError{
-				Violations: []validators.Violation{
-					{
-						Field:   "mtls.enabledBackend",
-						Message: "Changing CA when mTLS is enabled is forbidden. Disable mTLS first and then change the CA",
-					},
-				},
-			}))
-		})
-
 		It("should allow to change CA when mTLS is disabled", func() {
 			// given
 			meshName := "mesh-1"

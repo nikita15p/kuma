@@ -13,4 +13,8 @@ message ProvidedCertificateAuthorityConfig {
   kuma.system.v1alpha1.DataSource cert = 1;
   // Data source for the key of CA
   kuma.system.v1alpha1.DataSource key = 2;
+  // Data source for the root cert
+  kuma.system.v1alpha1.DataSource rootCert = 3;
+  // Data source for the chain cert
+  kuma.system.v1alpha1.DataSource chainCert = 4;
 }

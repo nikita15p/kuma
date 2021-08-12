@@ -180,7 +180,7 @@ var _ = Describe("Builtin CA Manager", func() {
 					"v1": true,
 				},
 			}
-			pair, err := caManager.GenerateDataplaneCert(context.Background(), mesh, backend, tags)
+			pair, _, err := caManager.GenerateDataplaneCert(context.Background(), mesh, backend, tags)
 
 			// then
 			Expect(err).ToNot(HaveOccurred())
@@ -209,7 +209,7 @@ var _ = Describe("Builtin CA Manager", func() {
 			}
 
 			// when
-			_, err := caManager.GenerateDataplaneCert(context.Background(), mesh, backend, mesh_proto.MultiValueTagSet{})
+			_, _, err := caManager.GenerateDataplaneCert(context.Background(), mesh, backend, mesh_proto.MultiValueTagSet{})
 
 			// then
 			Expect(err).To(MatchError(`failed to load CA key pair for Mesh "default" and backend "builtin-non-existent": Resource not found: type="Secret" name="default.ca-builtin-cert-builtin-non-existent" mesh="default"`))

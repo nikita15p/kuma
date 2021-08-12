@@ -197,7 +197,7 @@ var _ = Describe("Provided CA", func() {
 			_, err := caManager.GetRootCert(context.Background(), "default", backendWithInvalidCerts)
 
 			// then
-			Expect(err).To(MatchError(`failed to load CA key pair for Mesh "default" and backend "provided-2": could not load data: open testdata/invalid.key: no such file or directory`))
+			Expect(err).To(MatchError(`failed to load root cert for Mesh "default" and backend "provided-2": failed to load CA key pair: could not load data: open testdata/invalid.key: no such file or directory`))
 		})
 	})
 
@@ -213,7 +213,7 @@ var _ = Describe("Provided CA", func() {
 					"v1": true,
 				},
 			}
-			pair, err := caManager.GenerateDataplaneCert(context.Background(), "default", backendWithTestCerts, tags)
+			pair, _, err := caManager.GenerateDataplaneCert(context.Background(), "default", backendWithTestCerts, tags)
 
 			// then
 			Expect(err).ToNot(HaveOccurred())
@@ -235,7 +235,7 @@ var _ = Describe("Provided CA", func() {
 
 		It("should throw an error on invalid certs", func() {
 			// when
-			_, err := caManager.GenerateDataplaneCert(context.Background(), "default", backendWithInvalidCerts, mesh_proto.MultiValueTagSet{})
+			_, _, err := caManager.GenerateDataplaneCert(context.Background(), "default", backendWithInvalidCerts, mesh_proto.MultiValueTagSet{})
 
 			// then
 			Expect(err).To(MatchError(`failed to load CA key pair for Mesh "default" and backend "provided-2": could not load data: open testdata/invalid.key: no such file or directory`))

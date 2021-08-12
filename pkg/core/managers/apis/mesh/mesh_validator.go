@@ -44,9 +44,6 @@ func (m *MeshValidator) validateMTLSBackends(ctx context.Context, name string, r
 }
 
 func (m *MeshValidator) ValidateUpdate(ctx context.Context, previousMesh *core_mesh.MeshResource, newMesh *core_mesh.MeshResource) error {
-	if err := m.validateMTLSBackendChange(previousMesh, newMesh); err != nil {
-		return err
-	}
 	if err := m.validateMTLSBackends(ctx, newMesh.Meta.GetName(), newMesh); err != nil {
 		return err
 	}
@@ -64,12 +61,4 @@ func (m *MeshValidator) ValidateDelete(ctx context.Context, name string) error {
 		return validationErr
 	}
 	return nil
-}
-
-func (m *MeshValidator) validateMTLSBackendChange(previousMesh *core_mesh.MeshResource, newMesh *core_mesh.MeshResource) error {
-	verr := validators.ValidationError{}
-	if previousMesh.MTLSEnabled() && newMesh.MTLSEnabled() && previousMesh.Spec.GetMtls().GetEnabledBackend() != newMesh.Spec.GetMtls().GetEnabledBackend() {
-		verr.AddViolation("mtls.enabledBackend", "Changing CA when mTLS is enabled is forbidden. Disable mTLS first and then change the CA")
-	}
-	return verr.OrNil()
 }
