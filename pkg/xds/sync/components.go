@@ -29,7 +29,9 @@ func defaultDataplaneProxyBuilder(rt core_runtime.Runtime, metadataTracker Datap
 		FaultInjectionMatcher: faultinjections.FaultInjectionMatcher{ResourceManager: rt.ReadOnlyResourceManager()},
 		RateLimitMatcher:      ratelimits.RateLimitMatcher{ResourceManager: rt.ReadOnlyResourceManager()},
 		Zone:                  rt.Config().Multizone.Zone.Name,
-		apiVersion:            apiVersion,
+		APIVersion:            apiVersion,
+		ConfigManager:         rt.ConfigManager(),
+		TopLevelDomain:        rt.Config().DNSServer.Domain,
 	}
 }
 
@@ -59,7 +61,6 @@ func DefaultDataplaneWatchdogFactory(
 	xdsContextBuilder := newXDSContextBuilder(envoyCpCtx, connectionInfoTracker, rt.ReadOnlyResourceManager(), rt.LookupIP(), rt.EnvoyAdminClient())
 
 	deps := DataplaneWatchdogDependencies{
-		resManager:            rt.ResourceManager(),
 		dataplaneProxyBuilder: dataplaneProxyBuilder,
 		dataplaneReconciler:   dataplaneReconciler,
 		ingressProxyBuilder:   ingressProxyBuilder,
