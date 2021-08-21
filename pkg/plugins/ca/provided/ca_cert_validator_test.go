@@ -8,15 +8,13 @@ import (
 	"math/big"
 	"path/filepath"
 
+	"github.com/ghodss/yaml"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/ginkgo/extensions/table"
 	. "github.com/onsi/gomega"
-
-	"github.com/ghodss/yaml"
 	"github.com/pkg/errors"
 
 	. "github.com/kumahq/kuma/pkg/plugins/ca/provided"
-
 	util_tls "github.com/kumahq/kuma/pkg/tls"
 )
 
@@ -38,7 +36,7 @@ var _ = Describe("ValidateCaCert()", func() {
 
 		// when
 		err = ValidateCaCert(*signingPair)
-		// then
+		// thenGe
 		Expect(err).ToNot(HaveOccurred())
 	})
 
@@ -174,9 +172,9 @@ bgeEDefxTxoTMgJ1urwl0KX6R9dbv9YWZWJXk2DQj6UwkMEyXpc+kw==
 			return testCase{
 				expectedErr: `
                 violations:
-                - field: cert
+                - field: cert[0]
                   message: "basic constraint 'CA' must be set to 'true' (see X509-SVID: 4.1. Basic Constraints)"
-                - field: cert
+                - field: cert[0]
                   message: "key usage extension 'keyCertSign' must be set (see X509-SVID: 4.3. Key Usage)"
 `,
 				input: *keyPair,
@@ -197,7 +195,7 @@ bgeEDefxTxoTMgJ1urwl0KX6R9dbv9YWZWJXk2DQj6UwkMEyXpc+kw==
 			return testCase{
 				expectedErr: `
                 violations:
-                - field: cert
+                - field: cert[0]
                   message: "key usage extension 'keyCertSign' must be set (see X509-SVID: 4.3. Key Usage)"
 `,
 				input: *keyPair,
@@ -221,7 +219,7 @@ bgeEDefxTxoTMgJ1urwl0KX6R9dbv9YWZWJXk2DQj6UwkMEyXpc+kw==
 			return testCase{
 				expectedErr: `
                 violations:
-                - field: cert
+                - field: cert[0]
                   message: "key usage extension 'keyAgreement' must NOT be set (see X509-SVID: Appendix A. X.509 Field Reference)"
 `,
 				input: *keyPair,
@@ -234,7 +232,7 @@ bgeEDefxTxoTMgJ1urwl0KX6R9dbv9YWZWJXk2DQj6UwkMEyXpc+kw==
 				return &x509.Certificate{
 					SerialNumber: big.NewInt(0),
 					IsCA:         false,
-					KeyUsage:  x509.KeyUsageKeyAgreement ,
+					KeyUsage:     x509.KeyUsageKeyAgreement,
 				}
 			})
 			// then
@@ -243,11 +241,11 @@ bgeEDefxTxoTMgJ1urwl0KX6R9dbv9YWZWJXk2DQj6UwkMEyXpc+kw==
 			return testCase{
 				expectedErr: `
                 violations:
-                - field: cert
+                - field: cert[0]
                   message: "basic constraint 'CA' must be set to 'true' (see X509-SVID: 4.1. Basic Constraints)"
-                - field: cert
+                - field: cert[0]
                   message: "key usage extension 'keyCertSign' must be set (see X509-SVID: 4.3. Key Usage)"
-                - field: cert
+                - field: cert[0]
                   message: "key usage extension 'keyAgreement' must NOT be set (see X509-SVID: Appendix A. X.509 Field Reference)"`,
 				input: *keyPair,
 			}

@@ -299,6 +299,29 @@ var _ = Describe("Dataplane", func() {
                 - field: networking
                   message: has to contain at least one inbound interface or gateway`,
 		}),
+		Entry("missing networking", testCase{
+			dataplane: `
+                type: Dataplane
+                name: dp-1
+                mesh: default`,
+			expected: `
+                violations:
+                - field: networking
+                  message: must be defined`,
+		}),
+		Entry("networking empty", testCase{
+			dataplane: `
+                type: Dataplane
+                name: dp-1
+                mesh: default
+                networking: {}`,
+			expected: `
+                violations:
+                - field: networking
+                  message: has to contain at least one inbound interface or gateway
+                - field: networking.address
+                  message: address can't be empty`,
+		}),
 		Entry("networking.address: empty", testCase{
 			dataplane: `
                 type: Dataplane
@@ -464,9 +487,9 @@ var _ = Describe("Dataplane", func() {
 			expected: `
                 violations:
                 - field: networking.inbound[0].port
-                  message: port has to be in range of [1, 65535]
+                  message: port must be in the range [1, 65535]
                 - field: networking.inbound[1].port
-                  message: port has to be in range of [1, 65535]`,
+                  message: port must be in the range [1, 65535]`,
 		}),
 		Entry("networking.inbound: servicePort out of the range", testCase{
 			dataplane: `
@@ -486,7 +509,7 @@ var _ = Describe("Dataplane", func() {
 			expected: `
                 violations:
                 - field: networking.inbound[0].servicePort
-                  message: servicePort has to be in range of [0, 65535]`,
+                  message: port must be in the range [1, 65535]`,
 		}),
 		Entry("networking.inbound: invalid address", testCase{
 			dataplane: `
@@ -704,9 +727,9 @@ var _ = Describe("Dataplane", func() {
 			expected: `
                 violations:
                 - field: networking.outbound[0].port
-                  message: port has to be in range of [1, 65535]
+                  message: port must be in the range [1, 65535]
                 - field: networking.outbound[1].port
-                  message: port has to be in range of [1, 65535]`,
+                  message: port must be in the range [1, 65535]`,
 		}),
 		Entry("networking.outbound: invalid address", testCase{
 			dataplane: `
@@ -924,7 +947,7 @@ var _ = Describe("Dataplane", func() {
                 - field: networking.ingress.publicAddress.address
                   message: address has to be valid IP address or domain name
                 - field: networking.ingress.publicPort
-                  message: port has to be in range of [1, 65535]`,
+                  message: port must be in the range [1, 65535]`,
 		}),
 		Entry("inbound service address", testCase{
 			dataplane: `
@@ -1071,9 +1094,9 @@ var _ = Describe("Dataplane", func() {
 			expected: `
                 violations:
                 - field: probes.port
-                  message: port has to be in range of [1, 65535]
+                  message: port must be in the range [1, 65535]
                 - field: probes.endpoints[1].inboundPort
-                  message: port has to be in range of [1, 65535]
+                  message: port must be in the range [1, 65535]
                 - field: probes.endpoints[1].inboundPath
                   message: should be a valid URL Path
                 - field: probes.endpoints[1].path
