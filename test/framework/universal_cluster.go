@@ -27,6 +27,8 @@ type UniversalCluster struct {
 	defaultRetries int
 }
 
+var _ Cluster = &UniversalCluster{}
+
 func NewUniversalCluster(t *TestingT, name string, verbose bool) *UniversalCluster {
 	return &UniversalCluster{
 		t:              t,
@@ -75,13 +77,15 @@ func (c *UniversalCluster) Verbose() bool {
 	return c.verbose
 }
 
-func (c *UniversalCluster) DeployKuma(mode string, fs ...DeployOptionsFunc) error {
-	c.controlplane = NewUniversalControlPlane(c.t, mode, c.name, c, c.verbose)
-	opts := newDeployOpt(fs...)
+func (c *UniversalCluster) DeployKuma(mode core.CpMode, opt ...KumaDeploymentOption) error {
+	var opts kumaDeploymentOptions
 
+	opts.apply(opt...)
 	if opts.installationMode != KumactlInstallationMode {
 		return errors.Errorf("universal clusters only support the '%s' installation mode but got '%s'", KumactlInstallationMode, opts.installationMode)
 	}
+
+	c.controlplane = NewUniversalControlPlane(c.t, mode, c.name, c, c.verbose)
 
 	cmd := []string{"kuma-cp", "run"}
 	env := []string{"KUMA_MODE=" + mode, "KUMA_DNS_SERVER_PORT=53"}
@@ -129,15 +133,39 @@ func (c *UniversalCluster) DeployKuma(mode string, fs ...DeployOptionsFunc) erro
 		return err
 	}
 
-	kumacpURL := "http://localhost:" + app.ports["5681"]
-	err = c.controlplane.kumactl.KumactlConfigControlPlanesAdd(c.name, kumacpURL)
+	c.apps[AppModeCP] = app
+
+	var token string
+	if opts.env["KUMA_API_SERVER_AUTHN_TYPE"] == "tokens" {
+		token, err = c.generateAdminToken()
+		if err != nil {
+			return err
+		}
+	}
+
+	err = c.controlplane.kumactl.KumactlConfigControlPlanesAdd(c.name, c.GetKuma().GetAPIServerAddress(), token)
 	if err != nil {
 		return err
 	}
-
-	c.apps[AppModeCP] = app
-
 	return nil
+}
+
+func (c *UniversalCluster) generateAdminToken() (string, error) {
+	return retry.DoWithRetryE(c.t, "generating DP token", DefaultRetries, DefaultTimeout, func() (string, error) {
+		sshApp := NewSshApp(c.verbose, c.apps[AppModeCP].ports["22"], []string{}, []string{"curl",
+			"--fail", "--show-error",
+			"-XPOST",
+			"-H", "'content-type: application/json'",
+			"--data", `'{"name": "admin", "group": "admin", "validFor": "24h"}'`,
+			"http://localhost:5681/tokens/user"})
+		if err := sshApp.Run(); err != nil {
+			return "", err
+		}
+		if sshApp.Err() != "" {
+			return "", errors.New(sshApp.Err())
+		}
+		return sshApp.Out(), nil
+	})
 }
 
 func (c *UniversalCluster) GetKuma() ControlPlane {
@@ -148,7 +176,7 @@ func (c *UniversalCluster) VerifyKuma() error {
 	return c.controlplane.kumactl.RunKumactl("get", "dataplanes")
 }
 
-func (c *UniversalCluster) DeleteKuma(opts ...DeployOptionsFunc) error {
+func (c *UniversalCluster) DeleteKuma(...KumaDeploymentOption) error {
 	err := c.apps[AppModeCP].Stop()
 	delete(c.apps, AppModeCP)
 	c.controlplane = nil
@@ -190,8 +218,9 @@ func (c *UniversalCluster) CreateZoneIngress(app *UniversalApp, name, ip, dpyaml
 	return app.dpApp.Start()
 }
 
-func (c *UniversalCluster) DeployApp(fs ...DeployOptionsFunc) error {
-	opts := newDeployOpt(fs...)
+func (c *UniversalCluster) DeployApp(opt ...AppDeploymentOption) error {
+	var opts appDeploymentOptions
+	opts.apply(opt...)
 	appname := opts.appname
 	token := opts.token
 	transparent := opts.transparent

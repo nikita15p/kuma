@@ -3,16 +3,18 @@ package gateway
 import (
 	"context"
 	"sort"
+	"strings"
 
 	"github.com/pkg/errors"
 
 	mesh_proto "github.com/kumahq/kuma/api/mesh/v1alpha1"
-	"github.com/kumahq/kuma/pkg/core/resources/apis/mesh"
+	core_mesh "github.com/kumahq/kuma/pkg/core/resources/apis/mesh"
 	core_xds "github.com/kumahq/kuma/pkg/core/xds"
 	"github.com/kumahq/kuma/pkg/plugins/runtime/gateway/route"
 	xds_context "github.com/kumahq/kuma/pkg/xds/context"
 	"github.com/kumahq/kuma/pkg/xds/envoy"
 	"github.com/kumahq/kuma/pkg/xds/envoy/clusters"
+	envoy_routes "github.com/kumahq/kuma/pkg/xds/envoy/routes"
 	"github.com/kumahq/kuma/pkg/xds/generator"
 )
 
@@ -28,6 +30,19 @@ func (*RouteTableGenerator) SupportsProtocol(mesh_proto.Gateway_Listener_Protoco
 // GenerateHost generates xDS resources for the current route table.
 func (r *RouteTableGenerator) GenerateHost(ctx xds_context.Context, info *GatewayResourceInfo) (*core_xds.ResourceSet, error) {
 	resources := ResourceAggregator{}
+
+	vh := envoy_routes.NewVirtualHostBuilder(info.Proxy.APIVersion).Configure(
+		// TODO(jpeach) use separator from envoy names package.
+		envoy_routes.CommonVirtualHost(strings.Join([]string{info.Listener.ResourceName, info.Host.Hostname}, ":")),
+		envoy_routes.DomainNames(info.Host.Hostname),
+	)
+
+	// Ensure that we get TLS on HTTPS protocol listeners.
+	if info.Listener.Protocol == mesh_proto.Gateway_Listener_HTTPS {
+		vh.Configure(envoy_routes.RequireTLS())
+	}
+
+	// TODO(jpeach) apply additional virtual host configuration.
 
 	// Sort routing table entries so the most specific match comes first.
 	sort.Sort(route.Sorter(info.RouteTable.Entries))
@@ -86,7 +101,7 @@ func (r *RouteTableGenerator) GenerateHost(ctx xds_context.Context, info *Gatewa
 			routeBuilder.Configure(route.RouteMirror(m.Percentage, m.Forward))
 		}
 
-		info.Resources.VirtualHost.Configure(route.VirtualHostRoute(&routeBuilder))
+		vh.Configure(route.VirtualHostRoute(&routeBuilder))
 	}
 
 	destinations, err := makeRouteDestinations(&info.RouteTable)
@@ -102,8 +117,7 @@ func (r *RouteTableGenerator) GenerateHost(ctx xds_context.Context, info *Gatewa
 		return nil, err
 	}
 
-	// TODO(jpeach) Once we drop TrafficRoute, generate resources
-	// for info.Resources.VirtualHost here instead of in generator.go
+	info.Resources.RouteConfiguration.Configure(envoy_routes.VirtualHost(vh))
 
 	return resources.Get(), nil
 }
@@ -155,14 +169,25 @@ func (r *RouteTableGenerator) generateClusters(
 			Tags: dest.Destination,
 		}})
 
+		// HTTP is a better default than "unknown".
+		if protocol == core_mesh.ProtocolUnknown {
+			protocol = core_mesh.ProtocolHTTP
+		}
+
 		builder := clusters.NewClusterBuilder(info.Proxy.APIVersion).Configure(
 			clusters.EdsCluster(name),
-			clusters.Timeout(protocol, nil /* TODO(jpeach) default timeout */),
-			clusters.CircuitBreaker(nil /* TODO(jpeach) uses default */),
-			clusters.OutlierDetection(nil /* TODO(jpeach) uses default */),
-			clusters.HealthCheck(protocol, nil /* TODO(jpeach) uses default */),
+			clusters.Timeout(protocol, timeoutPolicyFor(&dest)),
+			clusters.CircuitBreaker(circuitBreakerPolicyFor(&dest)),
+			clusters.OutlierDetection(circuitBreakerPolicyFor(&dest)),
+			clusters.HealthCheck(protocol, healthCheckPolicyFor(&dest)),
 			clusters.LB(nil /* TODO(jpeach) uses default Round Robin*/),
 		)
+
+		// TODO(jpeach) Envoy configures retries and fault injection with
+		// virtualhost filters, but Kuma models these as connection policies.
+		// Source+Destination matching implies that we would need to know the
+		// the destination cluster before deciding whether to enable the filter.
+		// It's not clear whether that can be done.
 
 		// Assuming this is an intra-Mesh service, enable mTLS.
 		builder.Configure(
@@ -172,9 +197,9 @@ func (r *RouteTableGenerator) generateClusters(
 		// TODO(jpeach) External services are "strict DNS" clusters and don't use mTLS.
 
 		switch protocol {
-		case mesh.ProtocolHTTP:
+		case core_mesh.ProtocolHTTP:
 			builder.Configure(clusters.Http())
-		case mesh.ProtocolHTTP2, mesh.ProtocolGRPC:
+		case core_mesh.ProtocolHTTP2, core_mesh.ProtocolGRPC:
 			builder.Configure(clusters.Http2())
 		}
 
@@ -213,4 +238,34 @@ func makeRouteDestinations(table *route.Table) (map[string]route.Destination, er
 	}
 
 	return destinations, nil
+}
+
+func timeoutPolicyFor(dest *route.Destination) *core_mesh.TimeoutResource {
+	if policy, ok := dest.Policies[core_mesh.TimeoutType]; ok {
+		if timeout, ok := policy.(*core_mesh.TimeoutResource); ok {
+			return timeout
+		}
+	}
+
+	return nil // TODO(jpeach) default timeout policy
+}
+
+func circuitBreakerPolicyFor(dest *route.Destination) *core_mesh.CircuitBreakerResource {
+	if policy, ok := dest.Policies[core_mesh.CircuitBreakerType]; ok {
+		if breaker, ok := policy.(*core_mesh.CircuitBreakerResource); ok {
+			return breaker
+		}
+	}
+
+	return nil // TODO(jpeach) default breaker policy
+}
+
+func healthCheckPolicyFor(dest *route.Destination) *core_mesh.HealthCheckResource {
+	if policy, ok := dest.Policies[core_mesh.HealthCheckType]; ok {
+		if checker, ok := policy.(*core_mesh.HealthCheckResource); ok {
+			return checker
+		}
+	}
+
+	return nil // TODO(jpeach) default breaker policy
 }
