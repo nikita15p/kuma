@@ -2,7 +2,7 @@
 
 A Helm chart for the Kuma Control Plane
 
-![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![Version: 0.6.3](https://img.shields.io/badge/Version-0.6.3-informational?style=flat-square) ![AppVersion: 1.2.3](https://img.shields.io/badge/AppVersion-1.2.3-informational?style=flat-square)
+![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![Version: 0.7.0](https://img.shields.io/badge/Version-0.7.0-informational?style=flat-square) ![AppVersion: 1.3.0](https://img.shields.io/badge/AppVersion-1.3.0-informational?style=flat-square)
 
 **Homepage:** <https://github.com/kumahq/kuma>
 
@@ -29,8 +29,9 @@ A Helm chart for the Kuma Control Plane
 | controlPlane.service.name | string | `nil` | Optionally override of the Kuma Control Plane Service's name |
 | controlPlane.service.type | string | `"ClusterIP"` | Service type of the Kuma Control Plane |
 | controlPlane.service.annotations | object | `{}` | Additional annotations to put on the Kuma Control Plane |
-| controlPlane.globalZoneSyncService | object | `{"annotations":{},"port":5685,"type":"LoadBalancer"}` | URL of Global Kuma CP |
+| controlPlane.globalZoneSyncService | object | `{"annotations":{},"loadBalancerIP":null,"port":5685,"type":"LoadBalancer"}` | URL of Global Kuma CP |
 | controlPlane.globalZoneSyncService.type | string | `"LoadBalancer"` | Service type of the Global-zone sync |
+| controlPlane.globalZoneSyncService.loadBalancerIP | string | `nil` | Optionally specify IP to be used by cloud provider when configuring load balancer |
 | controlPlane.globalZoneSyncService.annotations | object | `{}` | Additional annotations to put on the Global Zone Sync Service |
 | controlPlane.globalZoneSyncService.port | int | `5685` | Port on which Global Zone Sync Service is exposed |
 | controlPlane.defaults.skipMeshCreation | bool | `false` | Whether or not to skip creating the default Mesh |
@@ -64,6 +65,7 @@ A Helm chart for the Kuma Control Plane
 | ingress.drainTime | string | `"30s"` | Time for which old listener will still be active as draining |
 | ingress.replicas | int | `1` | Number of replicas of the Ingress |
 | ingress.service.type | string | `"LoadBalancer"` | Service type of the Ingress |
+| ingress.service.loadBalancerIP | string | `nil` | Optionally specify IP to be used by cloud provider when configuring load balancer |
 | ingress.service.annotations | object | `{}` | Additional annotations to put on the Ingress service |
 | ingress.service.port | int | `10001` | Port on which Ingress is exposed |
 | ingress.annotations | object | `{}` | Additional deployment annotation |

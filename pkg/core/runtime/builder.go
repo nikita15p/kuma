@@ -7,6 +7,7 @@ import (
 
 	"github.com/pkg/errors"
 
+	"github.com/kumahq/kuma/pkg/api-server/authn"
 	api_server "github.com/kumahq/kuma/pkg/api-server/customization"
 	kuma_cp "github.com/kumahq/kuma/pkg/config/app/kuma-cp"
 	"github.com/kumahq/kuma/pkg/core"
@@ -15,7 +16,9 @@ import (
 	"github.com/kumahq/kuma/pkg/core/datasource"
 	"github.com/kumahq/kuma/pkg/core/dns/lookup"
 	core_managers "github.com/kumahq/kuma/pkg/core/managers/apis/mesh"
+	"github.com/kumahq/kuma/pkg/core/rbac"
 	core_manager "github.com/kumahq/kuma/pkg/core/resources/manager"
+	resources_rbac "github.com/kumahq/kuma/pkg/core/resources/rbac"
 	core_store "github.com/kumahq/kuma/pkg/core/resources/store"
 	"github.com/kumahq/kuma/pkg/core/runtime/component"
 	"github.com/kumahq/kuma/pkg/core/secrets/store"
@@ -50,40 +53,46 @@ type BuilderContext interface {
 	DpServer() *dp_server.DpServer
 	MeshValidator() core_managers.MeshValidator
 	KDSContext() *kds_context.Context
+	APIServerAuthenticator() authn.Authenticator
+	ResourceAccess() resources_rbac.ResourceAccess
+	RoleAssignments() rbac.RoleAssignments
 }
 
 var _ BuilderContext = &Builder{}
 
 // Builder represents a multi-step initialization process.
 type Builder struct {
-	cfg        kuma_cp.Config
-	cm         component.Manager
-	rs         core_store.ResourceStore
-	ss         store.SecretStore
-	cs         core_store.ResourceStore
-	rm         core_manager.CustomizableResourceManager
-	rom        core_manager.ReadOnlyResourceManager
-	cam        core_ca.Managers
-	dsl        datasource.Loader
-	ext        context.Context
-	dns        resolver.DNSResolver
-	configm    config_manager.ConfigManager
-	leadInfo   component.LeaderInfo
-	lif        lookup.LookupIPFunc
-	eac        admin.EnvoyAdminClient
-	metrics    metrics.Metrics
-	erf        events.ListenerFactory
-	apim       api_server.APIManager
-	xdsh       *xds_hooks.Hooks
-	cap        secrets.CaProvider
-	dps        *dp_server.DpServer
-	kdsctx     *kds_context.Context
-	mv         core_managers.MeshValidator
-	shutdownCh <-chan struct{}
+	cfg      kuma_cp.Config
+	cm       component.Manager
+	rs       core_store.ResourceStore
+	ss       store.SecretStore
+	cs       core_store.ResourceStore
+	rm       core_manager.CustomizableResourceManager
+	rom      core_manager.ReadOnlyResourceManager
+	cam      core_ca.Managers
+	dsl      datasource.Loader
+	ext      context.Context
+	dns      resolver.DNSResolver
+	configm  config_manager.ConfigManager
+	leadInfo component.LeaderInfo
+	lif      lookup.LookupIPFunc
+	eac      admin.EnvoyAdminClient
+	metrics  metrics.Metrics
+	erf      events.ListenerFactory
+	apim     api_server.APIManager
+	xdsh     *xds_hooks.Hooks
+	cap      secrets.CaProvider
+	dps      *dp_server.DpServer
+	kdsctx   *kds_context.Context
+	mv       core_managers.MeshValidator
+	au       authn.Authenticator
+	ra       resources_rbac.ResourceAccess
+	ras      rbac.RoleAssignments
+	appCtx   context.Context
 	*runtimeInfo
 }
 
-func BuilderFor(cfg kuma_cp.Config, closeCh <-chan struct{}) (*Builder, error) {
+func BuilderFor(appCtx context.Context, cfg kuma_cp.Config) (*Builder, error) {
 	hostname, err := os.Hostname()
 	if err != nil {
 		return nil, errors.Wrap(err, "could not get hostname")
@@ -96,7 +105,7 @@ func BuilderFor(cfg kuma_cp.Config, closeCh <-chan struct{}) (*Builder, error) {
 		runtimeInfo: &runtimeInfo{
 			instanceId: fmt.Sprintf("%s-%s", hostname, suffix),
 		},
-		shutdownCh: closeCh,
+		appCtx: appCtx,
 	}, nil
 }
 
@@ -220,6 +229,21 @@ func (b *Builder) WithKDSContext(kdsctx *kds_context.Context) *Builder {
 	return b
 }
 
+func (b *Builder) WithAPIServerAuthenticator(au authn.Authenticator) *Builder {
+	b.au = au
+	return b
+}
+
+func (b *Builder) WithResourceAccess(ra resources_rbac.ResourceAccess) *Builder {
+	b.ra = ra
+	return b
+}
+
+func (b *Builder) WithRoleAssignments(ras rbac.RoleAssignments) *Builder {
+	b.ras = ras
+	return b
+}
+
 func (b *Builder) Build() (Runtime, error) {
 	if b.cm == nil {
 		return nil, errors.Errorf("ComponentManager has not been configured")
@@ -275,31 +299,43 @@ func (b *Builder) Build() (Runtime, error) {
 	if b.mv == nil {
 		return nil, errors.Errorf("MeshValidator has not been configured")
 	}
+	if b.au == nil {
+		return nil, errors.Errorf("API Server Authenticator has not been configured")
+	}
+	if b.ra == nil {
+		return nil, errors.Errorf("ResourceAccess has not been configured")
+	}
+	if b.ras == nil {
+		return nil, errors.Errorf("RoleAssignment has not been configured")
+	}
 	return &runtime{
 		RuntimeInfo: b.runtimeInfo,
 		RuntimeContext: &runtimeContext{
-			cfg:        b.cfg,
-			rm:         b.rm,
-			rom:        b.rom,
-			rs:         b.rs,
-			ss:         b.ss,
-			cam:        b.cam,
-			dsl:        b.dsl,
-			ext:        b.ext,
-			dns:        b.dns,
-			configm:    b.configm,
-			leadInfo:   b.leadInfo,
-			lif:        b.lif,
-			eac:        b.eac,
-			metrics:    b.metrics,
-			erf:        b.erf,
-			apim:       b.apim,
-			xdsh:       b.xdsh,
-			cap:        b.cap,
-			dps:        b.dps,
-			kdsctx:     b.kdsctx,
-			mv:         b.mv,
-			shutdownCh: b.shutdownCh,
+			cfg:      b.cfg,
+			rm:       b.rm,
+			rom:      b.rom,
+			rs:       b.rs,
+			ss:       b.ss,
+			cam:      b.cam,
+			dsl:      b.dsl,
+			ext:      b.ext,
+			dns:      b.dns,
+			configm:  b.configm,
+			leadInfo: b.leadInfo,
+			lif:      b.lif,
+			eac:      b.eac,
+			metrics:  b.metrics,
+			erf:      b.erf,
+			apim:     b.apim,
+			xdsh:     b.xdsh,
+			cap:      b.cap,
+			dps:      b.dps,
+			kdsctx:   b.kdsctx,
+			mv:       b.mv,
+			au:       b.au,
+			ra:       b.ra,
+			ras:      b.ras,
+			appCtx:   b.appCtx,
 		},
 		Manager: b.cm,
 	}, nil
@@ -371,6 +407,15 @@ func (b *Builder) KDSContext() *kds_context.Context {
 func (b *Builder) MeshValidator() core_managers.MeshValidator {
 	return b.mv
 }
-func (b *Builder) ShutdownCh() <-chan struct{} {
-	return b.shutdownCh
+func (b *Builder) APIServerAuthenticator() authn.Authenticator {
+	return b.au
+}
+func (b *Builder) ResourceAccess() resources_rbac.ResourceAccess {
+	return b.ra
+}
+func (b *Builder) RoleAssignments() rbac.RoleAssignments {
+	return b.ras
+}
+func (b *Builder) AppCtx() context.Context {
+	return b.appCtx
 }

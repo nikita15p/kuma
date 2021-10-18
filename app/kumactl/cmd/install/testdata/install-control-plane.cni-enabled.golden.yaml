@@ -672,6 +672,25 @@ rules:
       - list
       - watch
   - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+  - apiGroups:
       - ""
     resources:
       - services
@@ -919,7 +938,7 @@ spec:
         # priority scheduling and that its resources are reserved
         # if it ever gets evicted.
         scheduler.alpha.kubernetes.io/critical-pod: ''
-        checksum/config: 7d77632d948332725a3682bb8c14a4afb1be4923613eebff5819fa346b113e3c
+        checksum/config: ab106d5de6a92b705e6ecdc7ab3a93c86393d8ab5c86ea46778efe4decf15ace
     spec:
       nodeSelector:
       
@@ -997,8 +1016,8 @@ spec:
   template:
     metadata:
       annotations:
-        checksum/config: d197fa140fb2f04173c9f38a84787055696f859d2051b121a29b1fb6f20f5202
-        checksum/tls-secrets: e574017a20072501be563a9f48b4b4ae58de10a8d069548e3643cf71191f2914
+        checksum/config: 6df33ec160599ac1a5e9fda109e2ba0d02c865f926ac14ecf92895e96b70a228
+        checksum/tls-secrets: 8d96524f2edd766fb63fe05db26d83be9f7d7a5823e0878040d4a6ab95446e78
       labels:
         app.kubernetes.io/name: kuma
         app.kubernetes.io/instance: kuma
@@ -1085,7 +1104,6 @@ spec:
             name: kuma-control-plane-config
 ---
 apiVersion: admissionregistration.k8s.io/v1
-
 kind: MutatingWebhookConfiguration
 metadata:
   name: kuma-admission-mutating-webhook-configuration
@@ -1096,7 +1114,7 @@ metadata:
     app.kubernetes.io/instance: kuma
 webhooks:
   - name: mesh.defaulter.kuma-admission.kuma.io
-    admissionReviewVersions: ["v1beta1"]
+    admissionReviewVersions: ["v1"]
     failurePolicy: Fail
     clientConfig:
       caBundle: XYZ
@@ -1116,7 +1134,7 @@ webhooks:
           - meshes
     sideEffects: None
   - name: owner-reference.kuma-admission.kuma.io
-    admissionReviewVersions: ["v1beta1"]
+    admissionReviewVersions: ["v1"]
     failurePolicy: Fail
     clientConfig:
       caBundle: XYZ
@@ -1148,7 +1166,7 @@ webhooks:
       
     sideEffects: None
   - name: kuma-injector.kuma.io
-    admissionReviewVersions: ["v1beta1"]
+    admissionReviewVersions: ["v1"]
     failurePolicy: Ignore
     clientConfig:
       caBundle: XYZ
@@ -1168,7 +1186,6 @@ webhooks:
     sideEffects: None
 ---
 apiVersion: admissionregistration.k8s.io/v1
-
 kind: ValidatingWebhookConfiguration
 metadata:
   name: kuma-validating-webhook-configuration
@@ -1179,7 +1196,7 @@ metadata:
     app.kubernetes.io/instance: kuma
 webhooks:
   - name: validator.kuma-admission.kuma.io
-    admissionReviewVersions: ["v1beta1"]
+    admissionReviewVersions: ["v1"]
     failurePolicy: Fail
     clientConfig:
       caBundle: XYZ
@@ -1216,7 +1233,7 @@ webhooks:
       
     sideEffects: None
   - name: service.validator.kuma-admission.kuma.io
-    admissionReviewVersions: ["v1beta1"]
+    admissionReviewVersions: ["v1"]
     failurePolicy: Ignore
     clientConfig:
       caBundle: XYZ
@@ -1236,7 +1253,7 @@ webhooks:
           - services
     sideEffects: None
   - name: secret.validator.kuma-admission.kuma.io
-    admissionReviewVersions: ["v1beta1"]
+    admissionReviewVersions: ["v1"]
     namespaceSelector:
       matchLabels:
         kuma.io/system-namespace: "true"

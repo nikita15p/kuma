@@ -10,43 +10,34 @@ import (
 	"github.com/gruntwork-io/terratest/modules/retry"
 	"github.com/gruntwork-io/terratest/modules/testing"
 	"github.com/pkg/errors"
-	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	k8sjson "k8s.io/apimachinery/pkg/runtime/serializer/json"
 
-	kumav1alpha1 "github.com/kumahq/kuma/pkg/plugins/resources/k8s/native/api/v1alpha1"
+	"github.com/kumahq/kuma/pkg/config/core"
+	bootstrap_k8s "github.com/kumahq/kuma/pkg/plugins/bootstrap/k8s"
 	"github.com/kumahq/kuma/pkg/tls"
 )
 
 type InstallFunc func(cluster Cluster) error
 
-var K8sScheme = runtime.NewScheme()
+var Serializer *k8sjson.Serializer
 
 func init() {
-	err := corev1.AddToScheme(K8sScheme)
+	K8sScheme, err := bootstrap_k8s.NewScheme()
 	if err != nil {
 		panic(err)
 	}
-	err = appsv1.AddToScheme(K8sScheme)
-	if err != nil {
-		panic(err)
-	}
-	err = kumav1alpha1.AddToScheme(K8sScheme)
-	if err != nil {
-		panic(err)
-	}
-}
 
-var Serializer = k8sjson.NewSerializerWithOptions(
-	k8sjson.DefaultMetaFactory, K8sScheme, K8sScheme,
-	k8sjson.SerializerOptions{
-		Yaml:   true,
-		Pretty: true,
-		Strict: true,
-	},
-)
+	Serializer = k8sjson.NewSerializerWithOptions(
+		k8sjson.DefaultMetaFactory, K8sScheme, K8sScheme,
+		k8sjson.SerializerOptions{
+			Yaml:   true,
+			Pretty: true,
+			Strict: true,
+		},
+	)
+}
 
 func YamlK8sObject(obj runtime.Object) InstallFunc {
 	return func(cluster Cluster) error {
@@ -94,11 +85,10 @@ func YamlPathK8s(path string) InstallFunc {
 	}
 }
 
-func Kuma(mode string, fs ...DeployOptionsFunc) InstallFunc {
+func Kuma(mode core.CpMode, opt ...KumaDeploymentOption) InstallFunc {
 	return func(cluster Cluster) error {
-		fs = append(fs, WithIPv6(IsIPv6()))
-		err := cluster.DeployKuma(mode, fs...)
-		return err
+		opt = append(opt, WithIPv6(IsIPv6()))
+		return cluster.DeployKuma(mode, opt...)
 	}
 }
 
@@ -144,7 +134,7 @@ func WaitPodsAvailable(namespace, app string) InstallFunc {
 			return err
 		}
 		for _, p := range pods {
-			err := k8s.WaitUntilPodAvailableE(c.GetTesting(), c.GetKubectlOptions(namespace), p.GetName(), DefaultRetries, DefaultTimeout)
+			err := WaitUntilPodReadyE(c.GetTesting(), c.GetKubectlOptions(namespace), p.GetName(), DefaultRetries, DefaultTimeout)
 			if err != nil {
 				return err
 			}
@@ -153,8 +143,20 @@ func WaitPodsAvailable(namespace, app string) InstallFunc {
 	}
 }
 
+// WaitUntilPodReadyE waits until all the containers within the pod are ready, retrying the check for the specified amount of times, sleeping
+// for the provided duration between each try.
+func WaitUntilPodReadyE(t testing.TestingT, options *k8s.KubectlOptions, podName string, retries int, sleepBetweenRetries time.Duration) error {
+	logger.Default.Logf(t, "Waiting for pod %s to be available", podName)
+	if err := k8s.WaitUntilPodAvailableE(t, options, podName, retries, sleepBetweenRetries); err != nil {
+		logger.Default.Logf(t, "Timed out waiting for Pod %s: %s", podName, err)
+		return err
+	}
+	logger.Default.Logf(t, "Pod %s is available", podName)
+	return nil
+}
+
 func WaitUntilPodCompleteE(t testing.TestingT, options *k8s.KubectlOptions, podName string, retries int, sleepBetweenRetries time.Duration) error {
-	statusMsg := fmt.Sprintf("Wait for pod %s to be provisioned.", podName)
+	statusMsg := fmt.Sprintf("Waiting for pod %s to complete", podName)
 	message, err := retry.DoWithRetryE(
 		t,
 		statusMsg,
@@ -174,7 +176,7 @@ func WaitUntilPodCompleteE(t testing.TestingT, options *k8s.KubectlOptions, podN
 		},
 	)
 	if err != nil {
-		logger.Default.Logf(t, "Timedout waiting for Pod to be completed: %s", err)
+		logger.Default.Logf(t, "Timed out waiting for Pod to be completed: %s", err)
 		return err
 	}
 	logger.Default.Logf(t, message)
@@ -225,30 +227,6 @@ func WaitPodsNotAvailable(namespace, app string) InstallFunc {
 			)
 		}
 		return nil
-	}
-}
-
-func IngressUniversalOldType(mesh, token string) InstallFunc {
-	return func(cluster Cluster) error {
-		uniCluster := cluster.(*UniversalCluster)
-		isipv6 := IsIPv6()
-		verbose := false
-		app, err := NewUniversalApp(cluster.GetTesting(), uniCluster.name, AppIngress, AppIngress, isipv6, verbose, []string{})
-		if err != nil {
-			return err
-		}
-
-		app.CreateMainApp([]string{}, []string{})
-
-		err = app.mainApp.Start()
-		if err != nil {
-			return err
-		}
-		uniCluster.apps[AppIngress] = app
-
-		publicAddress := uniCluster.apps[AppIngress].ip
-		dpyaml := fmt.Sprintf(IngressDataplaneOldType, mesh, publicAddress, kdsPort, kdsPort)
-		return uniCluster.CreateDP(app, "ingress", mesh, app.ip, dpyaml, token, false)
 	}
 }
 
@@ -373,9 +351,10 @@ spec:
 	)
 }
 
-func DemoClientUniversal(name, mesh, token string, fs ...DeployOptionsFunc) InstallFunc {
+func DemoClientUniversal(name, mesh, token string, opt ...AppDeploymentOption) InstallFunc {
 	return func(cluster Cluster) error {
-		opts := newDeployOpt(fs...)
+		var opts appDeploymentOptions
+		opts.apply(opt...)
 		args := []string{"ncat", "-lvk", "-p", "3000"}
 		appYaml := ""
 		if opts.transparent {
@@ -387,14 +366,23 @@ func DemoClientUniversal(name, mesh, token string, fs ...DeployOptionsFunc) Inst
 				appYaml = fmt.Sprintf(DemoClientDataplane, mesh, "13000", "3000", name, "80", "8080")
 			}
 		}
-		fs = append(fs, WithName(name), WithMesh(mesh), WithAppname(AppModeDemoClient), WithToken(token), WithArgs(args), WithYaml(appYaml), WithIPv6(IsIPv6()))
-		return cluster.DeployApp(fs...)
+
+		opt = append(opt,
+			WithName(name),
+			WithMesh(mesh),
+			WithAppname(AppModeDemoClient),
+			WithToken(token),
+			WithArgs(args),
+			WithYaml(appYaml),
+			WithIPv6(IsIPv6()))
+		return cluster.DeployApp(opt...)
 	}
 }
 
-func TestServerUniversal(name, mesh, token string, fs ...DeployOptionsFunc) InstallFunc {
+func TestServerUniversal(name, mesh, token string, opt ...AppDeploymentOption) InstallFunc {
 	return func(cluster Cluster) error {
-		opts := newDeployOpt(fs...)
+		var opts appDeploymentOptions
+		opts.apply(opt...)
 		if len(opts.protocol) == 0 {
 			opts.protocol = "http"
 		}
@@ -442,16 +430,16 @@ networking:
     redirectPortOutbound: %s
 `, mesh, "80", "8080", opts.serviceName, opts.protocol, opts.serviceVersion, opts.serviceInstance, serviceProbe, redirectPortInbound, redirectPortInboundV6, redirectPortOutbound)
 
-		fs = append(fs,
+		opt = append(opt,
 			WithName(name),
 			WithMesh(mesh),
 			WithAppname("test-server"),
-			WithTransparentProxy(true), // test server is always ment to use with transparent proxy
+			WithTransparentProxy(true), // test server is always meant to be used with transparent proxy
 			WithToken(token),
 			WithArgs(args),
 			WithYaml(appYaml),
 			WithIPv6(IsIPv6()))
-		return cluster.DeployApp(fs...)
+		return cluster.DeployApp(opt...)
 	}
 }
 

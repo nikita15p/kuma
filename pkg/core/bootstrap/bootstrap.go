@@ -22,10 +22,12 @@ import (
 	"github.com/kumahq/kuma/pkg/core/managers/apis/zoneingressinsight"
 	"github.com/kumahq/kuma/pkg/core/managers/apis/zoneinsight"
 	core_plugins "github.com/kumahq/kuma/pkg/core/plugins"
+	"github.com/kumahq/kuma/pkg/core/rbac"
 	"github.com/kumahq/kuma/pkg/core/resources/apis/mesh"
 	"github.com/kumahq/kuma/pkg/core/resources/apis/system"
 	core_manager "github.com/kumahq/kuma/pkg/core/resources/manager"
 	core_model "github.com/kumahq/kuma/pkg/core/resources/model"
+	resources_rbac "github.com/kumahq/kuma/pkg/core/resources/rbac"
 	"github.com/kumahq/kuma/pkg/core/resources/registry"
 	core_store "github.com/kumahq/kuma/pkg/core/resources/store"
 	core_runtime "github.com/kumahq/kuma/pkg/core/runtime"
@@ -44,11 +46,11 @@ import (
 	"github.com/kumahq/kuma/pkg/xds/secrets"
 )
 
-func buildRuntime(cfg kuma_cp.Config, closeCh <-chan struct{}) (core_runtime.Runtime, error) {
+func buildRuntime(appCtx context.Context, cfg kuma_cp.Config) (core_runtime.Runtime, error) {
 	if err := autoconfigure(&cfg); err != nil {
 		return nil, err
 	}
-	builder, err := core_runtime.BuilderFor(cfg, closeCh)
+	builder, err := core_runtime.BuilderFor(appCtx, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -102,6 +104,13 @@ func buildRuntime(cfg kuma_cp.Config, closeCh <-chan struct{}) (core_runtime.Run
 	builder.WithDpServer(server.NewDpServer(*cfg.DpServer, builder.Metrics()))
 	builder.WithKDSContext(kds_context.DefaultContext(builder.ResourceManager(), cfg.Multizone.Zone.Name))
 
+	builder.WithRoleAssignments(rbac.NewStaticRoleAssignments(cfg.RBAC.Static))
+	builder.WithResourceAccess(resources_rbac.NewAdminResourceAccess(builder.RoleAssignments()))
+
+	if err := initializeAPIServerAuthenticator(builder); err != nil {
+		return nil, err
+	}
+
 	if err := initializeAfterBootstrap(cfg, builder); err != nil {
 		return nil, err
 	}
@@ -140,8 +149,8 @@ func initializeMetrics(builder *core_runtime.Builder) error {
 	return nil
 }
 
-func Bootstrap(cfg kuma_cp.Config, closeCh <-chan struct{}) (core_runtime.Runtime, error) {
-	runtime, err := buildRuntime(cfg, closeCh)
+func Bootstrap(appCtx context.Context, cfg kuma_cp.Config) (core_runtime.Runtime, error) {
+	runtime, err := buildRuntime(appCtx, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -283,6 +292,20 @@ func initializeCaManagers(builder *core_runtime.Builder) error {
 		}
 		builder.WithCaManager(string(pluginName), caManager)
 	}
+	return nil
+}
+
+func initializeAPIServerAuthenticator(builder *core_runtime.Builder) error {
+	authnType := builder.Config().ApiServer.Authn.Type
+	plugin, ok := core_plugins.Plugins().AuthnAPIServer()[core_plugins.PluginName(authnType)]
+	if !ok {
+		return errors.Errorf("there is not implementation of authn named %s", authnType)
+	}
+	authenticator, err := plugin.NewAuthenticator(builder)
+	if err != nil {
+		return errors.Wrapf(err, "could not initiate authenticator %s", authnType)
+	}
+	builder.WithAPIServerAuthenticator(authenticator)
 	return nil
 }
 

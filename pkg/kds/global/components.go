@@ -47,23 +47,26 @@ func Setup(rt runtime.Runtime) (err error) {
 		go func() {
 			if err := kdsServer.StreamKumaResources(session.ServerStream()); err != nil {
 				log.Error(err, "StreamKumaResources finished with an error")
+			} else {
+				log.V(1).Info("StreamKumaResources finished gracefully")
 			}
 		}()
-		kdsStream := client.NewKDSStream(session.ClientStream(), session.PeerID())
+		kdsStream := client.NewKDSStream(session.ClientStream(), session.PeerID(), "") // we only care about Zone CP config. Zone CP should not receive Global CP config.
 		if err := createZoneIfAbsent(session.PeerID(), rt.ResourceManager()); err != nil {
 			log.Error(err, "Global CP could not create a zone")
 			return errors.New("Global CP could not create a zone") // send back message without details. Zone CP will retry
 		}
 		sink := client.NewKDSSink(log, reg.ObjectTypes(model.HasKDSFlag(model.ConsumedByGlobal)), kdsStream, Callbacks(resourceSyncer, rt.Config().Store.Type == store_config.KubernetesStore, kubeFactory))
 		go func() {
-			if err := sink.Start(session.Done()); err != nil {
+			if err := sink.Receive(); err != nil {
 				log.Error(err, "KDSSink finished with an error")
+			} else {
+				log.V(1).Info("KDSSink finished gracefully")
 			}
 		}()
 		return nil
 	})
-	callbacks := append(rt.KDSContext().GlobalServerCallbacks, onSessionStarted)
-	return rt.Add(mux.NewServer(callbacks, *rt.Config().Multizone.Global.KDS, rt.Metrics()))
+	return rt.Add(mux.NewServer(onSessionStarted, rt.KDSContext().GlobalServerFilters, *rt.Config().Multizone.Global.KDS, rt.Metrics()))
 }
 
 func createZoneIfAbsent(name string, resManager manager.ResourceManager) error {

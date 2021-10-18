@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-kit/kit/ratelimit"
 	"github.com/pkg/errors"
+	"golang.org/x/time/rate"
 
 	mesh_proto "github.com/kumahq/kuma/api/mesh/v1alpha1"
 	"github.com/kumahq/kuma/pkg/core"
@@ -36,7 +36,7 @@ type Config struct {
 	MinResyncTimeout   time.Duration
 	MaxResyncTimeout   time.Duration
 	Tick               func(d time.Duration) <-chan time.Time
-	RateLimiterFactory func() ratelimit.Allower
+	RateLimiterFactory func() *rate.Limiter
 }
 
 type resyncer struct {
@@ -45,10 +45,10 @@ type resyncer struct {
 	minResyncTimeout   time.Duration
 	maxResyncTimeout   time.Duration
 	tick               func(d time.Duration) <-chan time.Time
-	rateLimiterFactory func() ratelimit.Allower
+	rateLimiterFactory func() *rate.Limiter
 	meshInsightMux     sync.Mutex
 	serviceInsightMux  sync.Mutex
-	rateLimiters       map[string]ratelimit.Allower
+	rateLimiters       map[string]*rate.Limiter
 	registry           registry.TypeRegistry
 }
 
@@ -67,7 +67,7 @@ func NewResyncer(config *Config) component.Component {
 		eventFactory:       config.EventReaderFactory,
 		rm:                 config.ResourceManager,
 		rateLimiterFactory: config.RateLimiterFactory,
-		rateLimiters:       map[string]ratelimit.Allower{},
+		rateLimiters:       map[string]*rate.Limiter{},
 		registry:           config.Registry,
 	}
 
@@ -118,6 +118,9 @@ func (r *resyncer) Start(stop <-chan struct{}) error {
 		if resourceChanged.Type == core_mesh.MeshType && resourceChanged.Operation == events.Delete {
 			r.deleteRateLimiter(resourceChanged.Key.Name)
 		}
+		if !r.getRateLimiter(resourceChanged.Key.Mesh).Allow() {
+			continue
+		}
 		if resourceChanged.Type == core_mesh.DataplaneType || resourceChanged.Type == core_mesh.DataplaneInsightType {
 			if err := r.createOrUpdateServiceInsight(resourceChanged.Key.Mesh); err != nil {
 				log.Error(err, "unable to resync ServiceInsight", "mesh", resourceChanged.Key.Mesh)
@@ -127,11 +130,8 @@ func (r *resyncer) Start(stop <-chan struct{}) error {
 			continue
 		}
 		if resourceChanged.Operation == events.Update && resourceChanged.Type != core_mesh.DataplaneInsightType {
-			// 'Update' events doesn't affect MeshInsight expect for DataplaneInsight,
+			// 'Update' events doesn't affect MeshInsight except for DataplaneInsight,
 			// because that's how we find online/offline Dataplane's status
-			continue
-		}
-		if !r.getRateLimiter(resourceChanged.Key.Mesh).Allow() {
 			continue
 		}
 		if err := r.createOrUpdateMeshInsight(resourceChanged.Key.Mesh); err != nil {
@@ -141,7 +141,7 @@ func (r *resyncer) Start(stop <-chan struct{}) error {
 	}
 }
 
-func (r *resyncer) getRateLimiter(mesh string) ratelimit.Allower {
+func (r *resyncer) getRateLimiter(mesh string) *rate.Limiter {
 	if _, ok := r.rateLimiters[mesh]; !ok {
 		r.rateLimiters[mesh] = r.rateLimiterFactory()
 	}
@@ -173,6 +173,27 @@ func (r *resyncer) createOrUpdateServiceInsights() error {
 	return nil
 }
 
+func addDpToInsight(insight *mesh_proto.ServiceInsight, svcName string, status core_mesh.Status) {
+	if _, ok := insight.Services[svcName]; !ok {
+		insight.Services[svcName] = &mesh_proto.ServiceInsight_Service{
+			Dataplanes: &mesh_proto.ServiceInsight_Service_DataplaneStat{},
+		}
+	}
+
+	dataplanes := insight.Services[svcName].Dataplanes
+
+	dataplanes.Total++
+
+	switch status {
+	case core_mesh.Online:
+		dataplanes.Online++
+	case core_mesh.Offline:
+		dataplanes.Offline++
+	case core_mesh.PartiallyDegraded:
+		dataplanes.Offline++
+	}
+}
+
 func (r *resyncer) createOrUpdateServiceInsight(mesh string) error {
 	r.serviceInsightMux.Lock()
 	defer r.serviceInsightMux.Unlock()
@@ -193,30 +214,13 @@ func (r *resyncer) createOrUpdateServiceInsight(mesh string) error {
 	for _, dpOverview := range dpOverviews.Items {
 		status, _ := dpOverview.GetStatus()
 
-		for _, inbound := range dpOverview.Spec.Dataplane.Networking.Inbound {
-			svcName := inbound.GetService()
-
-			if _, ok := insight.Services[svcName]; !ok {
-				insight.Services[svcName] = &mesh_proto.ServiceInsight_Service{
-					Dataplanes: &mesh_proto.ServiceInsight_Service_DataplaneStat{},
-				}
-			}
-
-			dataplanes := insight.Services[svcName].Dataplanes
-
-			dataplanes.Total++
-
-			switch status {
-			case core_mesh.Online:
-				dataplanes.Online++
-			case core_mesh.Offline:
-				dataplanes.Offline++
-			case core_mesh.PartiallyDegraded:
-				if inbound.Health != nil && !inbound.Health.Ready {
-					dataplanes.Offline++
-				} else {
-					dataplanes.Online++
-				}
+		// Builtin gateways have inbounds
+		if dpOverview.Spec.Dataplane.IsDelegatedGateway() {
+			svcName := dpOverview.Spec.Dataplane.Networking.GetGateway().GetTags()[mesh_proto.ServiceTag]
+			addDpToInsight(insight, svcName, status)
+		} else {
+			for _, inbound := range dpOverview.Spec.Dataplane.Networking.Inbound {
+				addDpToInsight(insight, inbound.GetService(), status)
 			}
 		}
 	}

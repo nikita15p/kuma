@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -150,7 +152,7 @@ func (e *Envoy) Start(stop <-chan struct{}) error {
 	}
 
 	args := []string{
-		"-c", configFile,
+		"--config-path", configFile,
 		"--drain-time-s",
 		fmt.Sprintf("%d", e.opts.Config.Dataplane.DrainTime/time.Second),
 		// "hot restart" (enabled by default) requires each Envoy instance to have
@@ -162,17 +164,31 @@ func (e *Envoy) Start(stop <-chan struct{}) error {
 		// and we don't expect users to do "hot restart" manually.
 		// so, let's turn it off to simplify getting started experience.
 		"--disable-hot-restart",
-		"-l ", e.opts.LogLevel.String(),
+		"--log-level", e.opts.LogLevel.String(),
 	}
 	if version != "" { // version is always send by Kuma CP, but we check empty for backwards compatibility reasons (new Kuma DP connects to old Kuma CP)
 		args = append(args, "--bootstrap-version", string(version))
 	}
 
+	// If the concurrency is explicit, use that. On Linux, users
+	// can also implicitly set concurrency using cpusets.
+	if e.opts.Config.DataplaneRuntime.Concurrency > 0 {
+		args = append(args,
+			"--concurrency",
+			strconv.FormatUint(uint64(e.opts.Config.DataplaneRuntime.Concurrency), 10),
+		)
+	} else if runtime.GOOS == "linux" {
+		// The `--cpuset-threads` flag is still present on
+		// non-Linux, but emits a warning that we might as well
+		// avoid.
+		args = append(args, "--cpuset-threads")
+	}
+
 	command := command_utils.BuildCommand(ctx, e.opts.Stdout, e.opts.Stderr, resolvedPath, args...)
 
-	runLog.Info("starting Envoy", "args", args)
+	runLog.Info("starting Envoy", "path", resolvedPath, "arguments", args)
 	if err := command.Start(); err != nil {
-		runLog.Error(err, "the envoy executable was found at "+resolvedPath+" but an error occurred when executing it")
+		runLog.Error(err, "envoy executable failed", "path", resolvedPath, "arguments", args)
 		return err
 	}
 	done := make(chan error, 1)
@@ -209,7 +225,7 @@ func (e *Envoy) version() (*EnvoyVersion, error) {
 	command := exec.Command(resolvedPath, arg)
 	output, err := command.Output()
 	if err != nil {
-		return nil, errors.Wrap(err, fmt.Sprintf("the envoy excutable was found at %s but an error occurred when executing it with arg %s", resolvedPath, arg))
+		return nil, errors.Wrapf(err, "failed to execute %s with arguments %q", resolvedPath, arg)
 	}
 	build := strings.ReplaceAll(string(output), "\r\n", "\n")
 	build = strings.Trim(build, "\n")

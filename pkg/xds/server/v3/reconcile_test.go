@@ -1,18 +1,17 @@
 package v3
 
 import (
-	"fmt"
-	"sync/atomic"
-
-	envoy "github.com/envoyproxy/go-control-plane/envoy/api/v2"
-	envoy_auth "github.com/envoyproxy/go-control-plane/envoy/api/v2/auth"
+	envoy_cluster "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
+	envoy_endpoint "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
+	envoy_listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
+	envoy_route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
+	envoy_auth "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	envoy_types "github.com/envoyproxy/go-control-plane/pkg/cache/types"
 	envoy_cache "github.com/envoyproxy/go-control-plane/pkg/cache/v3"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 
 	mesh_proto "github.com/kumahq/kuma/api/mesh/v1alpha1"
-	"github.com/kumahq/kuma/pkg/core"
 	core_mesh "github.com/kumahq/kuma/pkg/core/resources/apis/mesh"
 	xds_model "github.com/kumahq/kuma/pkg/core/xds"
 	test_model "github.com/kumahq/kuma/pkg/test/resources/model"
@@ -21,25 +20,6 @@ import (
 
 var _ = Describe("Reconcile", func() {
 	Describe("reconciler", func() {
-
-		var backupNewUUID func() string
-
-		BeforeEach(func() {
-			backupNewUUID = core.NewUUID
-		})
-		AfterEach(func() {
-			core.NewUUID = backupNewUUID
-		})
-
-		var serial uint64
-
-		BeforeEach(func() {
-			core.NewUUID = func() string {
-				uuid := atomic.AddUint64(&serial, 1)
-				return fmt.Sprintf("v%d", uuid)
-			}
-		})
-
 		var xdsContext XdsContext
 
 		BeforeEach(func() {
@@ -51,28 +31,28 @@ var _ = Describe("Reconcile", func() {
 				envoy_types.Listener: {
 					Items: map[string]envoy_types.ResourceWithTtl{
 						"listener": {
-							Resource: &envoy.Listener{},
+							Resource: &envoy_listener.Listener{},
 						},
 					},
 				},
 				envoy_types.Route: {
 					Items: map[string]envoy_types.ResourceWithTtl{
 						"route": {
-							Resource: &envoy.RouteConfiguration{},
+							Resource: &envoy_route.RouteConfiguration{},
 						},
 					},
 				},
 				envoy_types.Cluster: {
 					Items: map[string]envoy_types.ResourceWithTtl{
 						"cluster": {
-							Resource: &envoy.Cluster{},
+							Resource: &envoy_cluster.Cluster{},
 						},
 					},
 				},
 				envoy_types.Endpoint: {
 					Items: map[string]envoy_types.ResourceWithTtl{
 						"endpoint": {
-							Resource: &envoy.ClusterLoadAssignment{},
+							Resource: &envoy_endpoint.ClusterLoadAssignment{},
 						},
 					},
 				},
@@ -120,6 +100,11 @@ var _ = Describe("Reconcile", func() {
 			err := r.Reconcile(xds_context.Context{}, proxy)
 			// then
 			Expect(err).ToNot(HaveOccurred())
+			Expect(snapshot.Resources[envoy_types.Listener].Version).To(BeEmpty())
+			Expect(snapshot.Resources[envoy_types.Route].Version).To(BeEmpty())
+			Expect(snapshot.Resources[envoy_types.Cluster].Version).To(BeEmpty())
+			Expect(snapshot.Resources[envoy_types.Endpoint].Version).To(BeEmpty())
+			Expect(snapshot.Resources[envoy_types.Secret].Version).To(BeEmpty())
 
 			By("verifying that snapshot versions were auto-generated")
 			// when
@@ -128,11 +113,16 @@ var _ = Describe("Reconcile", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(snapshot).ToNot(BeZero())
 			// and
-			Expect(snapshot.Resources[envoy_types.Listener].Version).To(Equal("v1"))
-			Expect(snapshot.Resources[envoy_types.Route].Version).To(Equal("v2"))
-			Expect(snapshot.Resources[envoy_types.Cluster].Version).To(Equal("v3"))
-			Expect(snapshot.Resources[envoy_types.Endpoint].Version).To(Equal("v4"))
-			Expect(snapshot.Resources[envoy_types.Secret].Version).To(Equal("v5"))
+			listenerV1 := snapshot.Resources[envoy_types.Listener].Version
+			routeV1 := snapshot.Resources[envoy_types.Route].Version
+			clusterV1 := snapshot.Resources[envoy_types.Cluster].Version
+			endpointV1 := snapshot.Resources[envoy_types.Endpoint].Version
+			secretV1 := snapshot.Resources[envoy_types.Secret].Version
+			Expect(listenerV1).ToNot(BeEmpty())
+			Expect(routeV1).ToNot(BeEmpty())
+			Expect(clusterV1).ToNot(BeEmpty())
+			Expect(endpointV1).ToNot(BeEmpty())
+			Expect(secretV1).ToNot(BeEmpty())
 
 			By("simulating discovery event (Dataplane watchdog triggers refresh)")
 			// when
@@ -147,11 +137,11 @@ var _ = Describe("Reconcile", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(snapshot).ToNot(BeZero())
 			// and
-			Expect(snapshot.Resources[envoy_types.Listener].Version).To(Equal("v1"))
-			Expect(snapshot.Resources[envoy_types.Route].Version).To(Equal("v2"))
-			Expect(snapshot.Resources[envoy_types.Cluster].Version).To(Equal("v3"))
-			Expect(snapshot.Resources[envoy_types.Endpoint].Version).To(Equal("v4"))
-			Expect(snapshot.Resources[envoy_types.Secret].Version).To(Equal("v5"))
+			Expect(snapshot.Resources[envoy_types.Listener].Version).To(Equal(listenerV1))
+			Expect(snapshot.Resources[envoy_types.Route].Version).To(Equal(routeV1))
+			Expect(snapshot.Resources[envoy_types.Cluster].Version).To(Equal(clusterV1))
+			Expect(snapshot.Resources[envoy_types.Endpoint].Version).To(Equal(endpointV1))
+			Expect(snapshot.Resources[envoy_types.Secret].Version).To(Equal(secretV1))
 
 			By("simulating discovery event (Dataplane gets changed)")
 			// when
@@ -166,11 +156,26 @@ var _ = Describe("Reconcile", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(snapshot).ToNot(BeZero())
 			// and
-			Expect(snapshot.Resources[envoy_types.Listener].Version).To(Equal("v6"))
-			Expect(snapshot.Resources[envoy_types.Route].Version).To(Equal("v7"))
-			Expect(snapshot.Resources[envoy_types.Cluster].Version).To(Equal("v8"))
-			Expect(snapshot.Resources[envoy_types.Endpoint].Version).To(Equal("v9"))
-			Expect(snapshot.Resources[envoy_types.Secret].Version).To(Equal("v10"))
+			Expect(snapshot.Resources[envoy_types.Listener].Version).To(SatisfyAll(
+				Not(Equal(listenerV1)),
+				Not(BeEmpty()),
+			))
+			Expect(snapshot.Resources[envoy_types.Route].Version).To(SatisfyAll(
+				Not(Equal(routeV1)),
+				Not(BeEmpty()),
+			))
+			Expect(snapshot.Resources[envoy_types.Cluster].Version).To(SatisfyAll(
+				Not(Equal(clusterV1)),
+				Not(BeEmpty()),
+			))
+			Expect(snapshot.Resources[envoy_types.Endpoint].Version).To(SatisfyAll(
+				Not(Equal(endpointV1)),
+				Not(BeEmpty()),
+			))
+			Expect(snapshot.Resources[envoy_types.Secret].Version).To(SatisfyAll(
+				Not(Equal(secretV1)),
+				Not(BeEmpty()),
+			))
 
 			By("simulating clear")
 			// when
@@ -182,11 +187,11 @@ var _ = Describe("Reconcile", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("no snapshot found"))
 
-			Expect(snapshot.Resources[envoy_types.Listener].Version).To(Equal(""))
-			Expect(snapshot.Resources[envoy_types.Route].Version).To(Equal(""))
-			Expect(snapshot.Resources[envoy_types.Cluster].Version).To(Equal(""))
-			Expect(snapshot.Resources[envoy_types.Endpoint].Version).To(Equal(""))
-			Expect(snapshot.Resources[envoy_types.Secret].Version).To(Equal(""))
+			Expect(snapshot.Resources[envoy_types.Listener].Version).To(BeEmpty())
+			Expect(snapshot.Resources[envoy_types.Route].Version).To(BeEmpty())
+			Expect(snapshot.Resources[envoy_types.Cluster].Version).To(BeEmpty())
+			Expect(snapshot.Resources[envoy_types.Endpoint].Version).To(BeEmpty())
+			Expect(snapshot.Resources[envoy_types.Secret].Version).To(BeEmpty())
 		})
 	})
 })
